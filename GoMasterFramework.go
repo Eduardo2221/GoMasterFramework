@@ -62,14 +62,12 @@ func main() {
 	}
 }
 
-// executeScanPort foca APENAS no target atual
 func executeScanPort() {
 	fmt.Printf("[*] Escaneando portas em: %s\n", target)
 	portList := strings.Split(ports, ",")
 
 	for _, p := range portList {
 		addr := net.JoinHostPort(target, p)
-		// Timeout de 500ms para precisão
 		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 		if err == nil {
 			fmt.Printf("[+] Porta %s: ABERTA\n", p)
@@ -79,7 +77,6 @@ func executeScanPort() {
 	fmt.Println("[*] Scan de portas finalizado.")
 }
 
-// executeScanSubdomain foca APENAS em descobrir nomes na wordlist
 func executeScanSubdomain() {
 	fmt.Printf("[*] Buscando subdomínios para: %s\n", target)
 
