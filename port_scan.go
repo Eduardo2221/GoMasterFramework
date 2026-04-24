@@ -1,59 +1,74 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"time"
 )
 
+// Representa uma porta encontrada
+type PortResult struct {
+	Port  string
+	State string // Ex: "ABERTA"
+}
+
+// Representa o resumo final do scan de portas
+type PortScanReport struct {
+	Target       string
+	TotalScanned int
+	OpenPorts    []PortResult
+}
+
 // Agora recebemos as variáveis como parâmetros
-func PortScan(alvo string, portas string, threads int) {
-	fmt.Printf("[*] Escaneando portas em: %s\n", alvo)
-	fmt.Printf("[*] Utilizando %d workers...\n", threads)
-	fmt.Println("--------------------------------------------------")
+func PortScan(alvo string, portas string, threads int) (PortScanReport, error) {
+	var report PortScanReport
+	report.Target = alvo
 
 	// Higiene: remove espaços caso o usuário tenha digitado "80, 443, 8080"
 	portas = strings.ReplaceAll(portas, " ", "")
 	portList := strings.Split(portas, ",")
 
-	// Buffer inteligente (mantém o consumo de memória baixo, mesmo para 65 mil portas)
+	// Buffer inteligente
 	tarefas := make(chan string, threads*2)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var count int
+	var encontrados []PortResult // Lista onde vamos guardar as portas abertas
 
 	// 1. INICIA OS WORKERS
 	for i := 1; i <= threads; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
+
 			for p := range tarefas {
 				addr := net.JoinHostPort(alvo, p)
+
+				// A tentativa de conexão fica FORA do Mutex (para não travar os outros workers)
 				conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
 
-				// Contador de progresso protegido contra concorrência
+				// Bloqueia apenas na hora de somar e salvar o resultado
 				mu.Lock()
 				count++
-				if count%500 == 0 { // Avisa a cada 500 portas testadas
-					fmt.Printf("[*] Progresso: %d portas testadas...\n", count)
+
+				// Se conectou (err == nil), a porta está aberta!
+				if err == nil {
+					encontrados = append(encontrados, PortResult{
+						Port:  p,
+						State: "ABERTA",
+					})
+					conn.Close() // Fecha a conexão
 				}
 				mu.Unlock()
-
-				// Se conectou, a porta está aberta!
-				if err == nil {
-					fmt.Printf("[Worker %d] [+] Porta %s: ABERTA\n", workerID, p)
-					conn.Close() // Importante fechar a conexão para não esgotar as portas locais
-				}
 			}
-		}(i)
+		}()
 	}
 
 	// 2. ALIMENTA OS WORKERS
 	for _, p := range portList {
-		if p != "" { // Evita enviar strings vazias caso a string termine em vírgula
+		if p != "" { // Evita enviar strings vazias
 			tarefas <- p
 		}
 	}
@@ -62,6 +77,9 @@ func PortScan(alvo string, portas string, threads int) {
 	close(tarefas)
 	wg.Wait()
 
-	fmt.Println("--------------------------------------------------")
-	fmt.Printf("[*] Scan de portas finalizado! Total testado: %d\n", count)
+	// Preenche o relatório final
+	report.TotalScanned = count
+	report.OpenPorts = encontrados
+
+	return report, nil
 }

@@ -35,32 +35,109 @@ func main() {
 		switch command {
 
 		case "set":
-			// Supondo que você já tem a HandleSet definida
-			HandleSet(parts)
+			// Chama a função e recebe o possível erro
+			err := HandleSet(parts)
+			if err != nil {
+				fmt.Printf("[-] Erro: %v\n", err)
+			} else {
+				// Se não teve erro, avisa que deu certo!
+				fmt.Printf("[+] Variável '%s' atualizada para: %s\n", parts[1], parts[2])
+			}
 
 		case "show":
-			// Supondo que você já tem a HandleShow definida
-			HandleShow()
+			// Chama a função que monta o texto e imprime na hora
+			textoConfigs := HandleShow()
+			fmt.Println(textoConfigs)
 
 		case "dns":
 			if target == "" {
 				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				EnumerateDNS(target, wordlist, threads)
+				fmt.Printf("[*] Iniciando enumeração DNS em %s...\n", target)
+
+				// 1. Recebemos os dados retornados
+				relatorio, err := EnumerateDNS(target, wordlist, threads)
+
+				// 2. Tratamos erros (ex: wordlist não encontrada)
+				if err != nil {
+					fmt.Printf("[-] Erro na varredura DNS: %v\n", err)
+					continue
+				}
+
+				// 3. Imprimimos o resultado formatado
+				fmt.Printf("\n=== RESULTADOS DNS (%s) ===\n", relatorio.Target)
+				fmt.Printf("Consultas feitas: %d | Encontrados: %d\n", relatorio.TotalQueries, len(relatorio.Findings))
+				fmt.Println("---------------------------------------")
+
+				if len(relatorio.Findings) > 0 {
+					for _, achado := range relatorio.Findings {
+						// achado.IPs é uma lista (slice), o Go formata automaticamente com [] no Printf
+						fmt.Printf("[+] %s -> %v\n", achado.Subdomain, achado.IPs)
+					}
+				} else {
+					fmt.Println("[-] Nenhum subdomínio encontrado.")
+				}
+				fmt.Println("=======================================")
 			}
 
 		case "dir":
 			if target == "" {
 				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				EnumerateDIR(target, wordlist, threads)
+				fmt.Printf("[*] Iniciando varredura em %s...\n", target)
+
+				// 1. Recebemos os dados retornados pela nova função
+				relatorio, err := EnumerateDIR(target, wordlist, threads)
+
+				// 2. Tratamos o erro (ex: se a wordlist não existir)
+				if err != nil {
+					fmt.Printf("[-] Erro na varredura: %v\n", err)
+					continue // Volta pro loop principal
+				}
+
+				// 3. Imprimimos o resultado formatado no terminal interativo
+				fmt.Printf("\n=== RESULTADOS DIR (%s) ===\n", relatorio.Target)
+				fmt.Printf("Tentativas: %d | Encontrados: %d\n", relatorio.TotalRequests, len(relatorio.Findings))
+				fmt.Println("---------------------------------------")
+
+				if len(relatorio.Findings) > 0 {
+					for _, achado := range relatorio.Findings {
+						fmt.Printf("[+] /%s (HTTP %d)\n", achado.Path, achado.Status)
+					}
+				} else {
+					fmt.Println("[-] Nenhum diretório encontrado.")
+				}
+				fmt.Println("=======================================")
 			}
 
 		case "port":
 			if target == "" {
 				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				PortScan(target, ports, threads)
+				fmt.Printf("[*] Iniciando scan de portas em %s...\n", target)
+
+				// 1. Recebe os dados retornados silenciosamente
+				relatorio, err := PortScan(target, ports, threads)
+
+				// 2. Trata possíveis erros
+				if err != nil {
+					fmt.Printf("[-] Erro no scan de portas: %v\n", err)
+					continue
+				}
+
+				// 3. Imprime os resultados formatados
+				fmt.Printf("\n=== RESULTADOS PORT SCAN (%s) ===\n", relatorio.Target)
+				fmt.Printf("Portas testadas: %d | Abertas: %d\n", relatorio.TotalScanned, len(relatorio.OpenPorts))
+				fmt.Println("---------------------------------------")
+
+				if len(relatorio.OpenPorts) > 0 {
+					for _, achado := range relatorio.OpenPorts {
+						fmt.Printf("[+] Porta %s -> %s\n", achado.Port, achado.State)
+					}
+				} else {
+					fmt.Println("[-] Nenhuma porta aberta encontrada.")
+				}
+				fmt.Println("=======================================")
 			}
 
 		case "help":
