@@ -2,25 +2,21 @@ package main
 
 import (
 	"bufio"
-	"embed"
 	"fmt"
-	"net"
 	"os"
 	"strings"
-	"time"
 )
 
-var defaultWordlist embed.FS
-
 var (
-	target   string
-	wordlist string = "EMBEDDED"
-	ports           = "80,443,22,3306"
+	target   string = "example.com"
+	wordlist string = "wordlist.txt"
+	ports    string = "21,22,80,443,3306,8080"
+	threads  int    = 10
 )
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("--- Go Master Framework ---")
+	fmt.Println("--- Go Master Framework (GMF) ---")
 	fmt.Println("Digite 'help' para comandos.")
 
 	for {
@@ -30,120 +26,59 @@ func main() {
 		}
 
 		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
 		parts := strings.Split(input, " ")
 		command := parts[0]
 
 		switch command {
+
 		case "set":
-			handleSet(parts)
+			// Supondo que você já tem a HandleSet definida
+			HandleSet(parts)
+
 		case "show":
-			handleShow()
-		case "scan":
+			// Supondo que você já tem a HandleShow definida
+			HandleShow()
+
+		case "dns":
 			if target == "" {
-				fmt.Println("[-] Erro: Defina 'target' (IP ou Domínio) antes de rodar o scan de portas.")
+				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				executeScanPort()
+				EnumerateDNS(target, wordlist, threads)
 			}
-		case "run":
-			if target == "" || wordlist == "" {
-				fmt.Println("[-] Erro: Defina 'target' e 'wordlist' antes de rodar o brute force.")
+
+		case "dir":
+			if target == "" {
+				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				executeScanSubdomain()
+				EnumerateDIR(target, wordlist, threads)
 			}
+
+		case "port":
+			if target == "" {
+				fmt.Println("[-] Erro: Defina 'target' antes.")
+			} else {
+				PortScan(target, ports, threads)
+			}
+
 		case "help":
-			fmt.Println("\nComandos:\n  set <option> <value> : target, wordlist, ports\n  show                 : Ver configs\n  scan                 : Scan de portas no target\n  run                  : Brute force de subdomínios\n  exit                 : Sair")
+			fmt.Println("\nComandos Disponíveis:")
+			fmt.Println("  set <campo> <valor> : Configura variáveis (target, wordlist, ports, threads)")
+			fmt.Println("  show                : Exibe as configurações atuais")
+			fmt.Println("  dns                 : Inicia a enumeração de subdomínios (DNS)")
+			fmt.Println("  dir                 : Inicia a enumeração de diretórios (Web)")
+			fmt.Println("  port                : Inicia o scan de portas TCP")
+			fmt.Println("  help                : Exibe este menu de ajuda")
+			fmt.Println("  exit                : Fecha o framework")
+
 		case "exit":
+			fmt.Println("[*] Saindo do GMF. Até a próxima!")
 			return
+
 		default:
-			if command != "" {
-				fmt.Printf("Comando desconhecido: %s\n", command)
-			}
+			fmt.Printf("[-] Comando desconhecido: %s\n", command)
 		}
 	}
-}
-
-func executeScanPort() {
-	fmt.Printf("[*] Escaneando portas em: %s\n", target)
-	portList := strings.Split(ports, ",")
-
-	for _, p := range portList {
-		addr := net.JoinHostPort(target, p)
-		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-		if err == nil {
-			fmt.Printf("[+] Porta %s: ABERTA\n", p)
-			conn.Close()
-		}
-	}
-	fmt.Println("[*] Scan de portas finalizado.")
-}
-
-func executeScanSubdomain() {
-	fmt.Printf("[*] Buscando subdomínios para: %s\n", target)
-
-	var scanner *bufio.Scanner
-
-	if wordlist == "EMBEDDED" {
-		f, err := defaultWordlist.Open("subdomains-top1million-110000.txt")
-		if err != nil {
-			fmt.Printf("[-] Erro ao carregar wordlist embutida: %v\n", err)
-			return
-		}
-		defer f.Close()
-		scanner = bufio.NewScanner(f)
-		fmt.Println("[+] Usando wordlist padrão (embutida)")
-	} else {
-		arquivo, err := os.Open(wordlist)
-		if err != nil {
-			fmt.Printf("[-] Erro ao abrir wordlist externa: %v\n", err)
-			return
-		}
-		defer arquivo.Close()
-		scanner = bufio.NewScanner(arquivo)
-		fmt.Printf("[+] Usando wordlist externa: %s\n", wordlist)
-	}
-
-	foundCount := 0
-	for scanner.Scan() {
-		sub := strings.TrimSpace(scanner.Text())
-		if sub == "" || strings.HasPrefix(sub, "#") {
-			continue
-		}
-		subAlvo := fmt.Sprintf("%s.%s", sub, target)
-
-		ips, err := net.LookupHost(subAlvo)
-		if err == nil {
-			fmt.Printf("[FOUND] %s -> %v\n", subAlvo, ips)
-			foundCount++
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("[-] Erro durante a leitura: %v\n", err)
-	}
-	fmt.Printf("[*] Brute force finalizado. %d subdomínios encontrados.\n", foundCount)
-}
-
-func handleSet(parts []string) {
-	if len(parts) < 3 {
-		fmt.Println("Uso: set <campo> <valor>")
-		return
-	}
-	campo := strings.ToLower(parts[1])
-	valor := parts[2]
-
-	switch campo {
-	case "target":
-		target = valor
-		fmt.Printf("[+] Target: %s\n", target)
-	case "wordlist":
-		wordlist = valor
-		fmt.Printf("[+] Wordlist: %s\n", wordlist)
-	case "ports":
-		ports = valor
-		fmt.Printf("[+] Ports: %s\n", ports)
-	}
-}
-
-func handleShow() {
-	fmt.Printf("\nSESSÃO ATUAL:\n  TARGET:   %s\n  WORDLIST: %s\n  PORTS:    %s\n", target, wordlist, ports)
 }
