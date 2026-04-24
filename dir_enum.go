@@ -10,26 +10,34 @@ import (
 	"time"
 )
 
-func EnumerateDIR(alvo string, wordlist string, threads int) {
+type DirResult struct {
+	Path   string
+	Status int
+}
+
+type ScanReport struct {
+	Target        string
+	TotalRequests int
+	Findings      []DirResult
+}
+
+func EnumerateDIR(alvo string, wordlist string, threads int) (ScanReport, error) {
+	var report ScanReport
+	report.Target = alvo
 	alvo = strings.TrimSuffix(alvo, "/")
 
 	file, err := os.Open(wordlist)
 	if err != nil {
-		fmt.Printf("Erro ao abrir a wordlist: %v\n", err)
-		return
+		// Ao invés de printar, retorna o erro para quem chamou a função lidar com ele
+		return report, fmt.Errorf("erro ao abrir a wordlist: %v", err)
 	}
 	defer file.Close()
-
-	fmt.Printf("[*] Iniciando enumeração de diretórios em: %s\n", alvo)
-	fmt.Printf("[*] Criando %d Workers (Threads) focados...\n", threads)
-	fmt.Println("--------------------------------------------------")
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var count int
+	var encontrados []DirResult // Lista onde vai guardar os achados
 
-	// Canal por onde enviaremos os caminhos para os Workers testarem
-	// O buffer (threads * 2) ajuda a manter o fluxo constante sem engarrafar
 	tarefas := make(chan string, threads*2)
 
 	// INICIA O WORKER POOL
@@ -38,45 +46,39 @@ func EnumerateDIR(alvo string, wordlist string, threads int) {
 		go func(id int) {
 			defer wg.Done()
 
-			// Cliente HTTP com timeout curto e sem seguir redirecionamentos automáticos
 			client := &http.Client{
 				Timeout: 2 * time.Second,
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
-					return http.ErrUseLastResponse // Interrompe o redirect
+					return http.ErrUseLastResponse
 				},
 			}
 
-			// O Worker fica em loop recebendo tarefas do canal até que ele seja fechado
 			for path := range tarefas {
 				fullURL := fmt.Sprintf("%s/%s", alvo, path)
 
-				// Preparamos a requisição com nosso User-Agent (Disfarce)
 				req, err := http.NewRequest("GET", fullURL, nil)
 				if err == nil {
 					req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 				}
 
-				// Faz a requisição de fato
 				resp, err := client.Do(req)
 
-				// Incrementa progresso a cada 1000 tentativas para não poluir a tela
-				// Usamos o Mutex (mu.Lock) para evitar que vários workers tentem somar ao mesmo tempo
+				// Bloqueia para atualizar contadores e salvar dados de forma segura
 				mu.Lock()
 				count++
-				if count%1000 == 0 {
-					fmt.Printf("[*] Progresso: %d tentativas realizadas...\n", count)
+
+				// Se encontrou algo, não printa, apenas salva na estrutura!
+				if err == nil && resp.StatusCode != 404 {
+					encontrados = append(encontrados, DirResult{
+						Path:   path,
+						Status: resp.StatusCode,
+					})
 				}
 				mu.Unlock()
 
-				if err != nil {
-					continue // Silencioso: Alvo não respondeu ou deu timeout
+				if err == nil {
+					resp.Body.Close()
 				}
-
-				// Se o status não for 404 (Not Found), encontramos algo!
-				if resp.StatusCode != 404 {
-					fmt.Printf("[Worker %d] FOUND: /%s (Status: %d)\n", id, path, resp.StatusCode)
-				}
-				resp.Body.Close()
 			}
 		}(i)
 	}
@@ -86,17 +88,17 @@ func EnumerateDIR(alvo string, wordlist string, threads int) {
 	for scanner.Scan() {
 		palavra := scanner.Text()
 		if palavra != "" {
-			tarefas <- palavra // Envia a palavra para o canal
+			tarefas <- palavra
 		}
 	}
 
-	// ENCERRAMENTO
-	// Fecha o canal para avisar aos workers que não há mais palavras
 	close(tarefas)
-
-	// Espera todos os workers terminarem o que estão fazendo
 	wg.Wait()
 
-	fmt.Println("--------------------------------------------------")
-	fmt.Printf("[*] Enumeração concluída! Total de tentativas: %d\n", count)
+	// Preenche o relatório final
+	report.TotalRequests = count
+	report.Findings = encontrados
+
+	// Retorna o relatório completo e erro nulo (pois deu tudo certo)
+	return report, nil
 }

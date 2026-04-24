@@ -5,33 +5,46 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 )
 
-func EnumerateDNS(alvo string, wordlist string, threads int) {
+// Representa um subdomínio encontrado e seus IPs
+type DNSResult struct {
+	Subdomain string
+	IPs       []string
+}
+
+// Representa o resumo final da varredura DNS
+type DNSScanReport struct {
+	Target       string
+	TotalQueries int
+	Findings     []DNSResult
+}
+
+func EnumerateDNS(alvo string, wordlist string, threads int) (DNSScanReport, error) {
+	var report DNSScanReport
+	report.Target = alvo
+
 	// Tenta abrir o arquivo de texto
 	file, err := os.Open(wordlist)
 	if err != nil {
-		fmt.Printf("Erro ao abrir a wordlist: %v\n", err)
-		return
+		return report, fmt.Errorf("erro ao abrir a wordlist: %v", err)
 	}
-	defer file.Close() // Garante que o arquivo será fechado no final
-
-	fmt.Printf("[*] Iniciando enumeração de DNS em: %s\n", alvo)
-	fmt.Printf("[*] Criando %d Workers (Threads) focados...\n", threads)
-	fmt.Println("--------------------------------------------------")
+	defer file.Close()
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var count int
+	var encontrados []DNSResult // Lista para guardar os subdomínios válidos
 
-	// Canal por onde enviaremos os prefixos para os Workers testarem
+	// Canal por onde envia os prefixos para os Workers testarem
 	tarefas := make(chan string, threads*2)
 
 	// INICIA O WORKER POOL
 	for i := 1; i <= threads; i++ {
 		wg.Add(1)
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 
 			// O Worker fica em loop recebendo tarefas do canal
@@ -42,38 +55,38 @@ func EnumerateDNS(alvo string, wordlist string, threads int) {
 				// Faz a pergunta para os servidores DNS da internet
 				ips, err := net.LookupHost(subdominio)
 
-				// Incrementa progresso a cada 1000 tentativas de forma segura
+				// Bloqueia com Mutex para atualizar contadores e salvar o resultado
 				mu.Lock()
 				count++
-				if count%1000 == 0 {
-					fmt.Printf("[*] Progresso: %d consultas realizadas...\n", count)
+
+				// Se não deu erro e retornou IPs, salva na estrutura
+				if err == nil && len(ips) > 0 {
+					encontrados = append(encontrados, DNSResult{
+						Subdomain: subdominio,
+						IPs:       ips,
+					})
 				}
 				mu.Unlock()
-
-				// Se não deu erro, significa que o subdomínio existe e retornou IPs!
-				if err == nil {
-					fmt.Printf("[Worker %d] [+] Válido: %s -> %v\n", id, subdominio, ips)
-				}
 			}
-		}(i)
+		}()
 	}
 
 	// ALIMENTA OS WORKERS COM AS TAREFAS
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		palavra := scanner.Text()
+		palavra := strings.TrimSpace(scanner.Text())
 		if palavra != "" {
 			tarefas <- palavra // Envia a palavra para o canal
 		}
 	}
 
 	// ENCERRAMENTO
-	// Fecha o canal para avisar aos workers que o arquivo acabou
 	close(tarefas)
-
-	// O script para aqui e espera todos os trabalhadores terminarem
 	wg.Wait()
 
-	fmt.Println("--------------------------------------------------")
-	fmt.Printf("[*] Enumeração concluída! Total de consultas: %d\n", count)
+	// Preenche o relatório final
+	report.TotalQueries = count
+	report.Findings = encontrados
+
+	return report, nil
 }

@@ -1,84 +1,148 @@
 package main
 
 import (
-	"bufio"
+	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
 var (
 	target   string = "example.com"
 	wordlist string = "wordlist.txt"
-	ports    string = "21,22,80,443,3306,8080"
-	threads  int    = 10
+	//wl_dns   string = "/usr/share/seclists/Discovery/DNS/top-1m.txt"
+	//wl_dir   string = "/usr/share/seclists/Discovery/Web-Content/raft-large.txt"
+	ports   string = "1-1024,3306,3389,8080"
+	threads int    = 10
 )
 
-func main() {
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("--- Go Master Framework (GMF) ---")
-	fmt.Println("Digite 'help' para comandos.")
+func ParsePorts(portStr string) ([]string, error) {
+	// Removemos os espaços para evitar problemas
+	portStr = strings.ReplaceAll(portStr, " ", "")
 
-	for {
-		fmt.Print("\nGMF > ")
-		if !scanner.Scan() {
-			break
-		}
+	// Separamos tudo que estiver dividido por vírgula
+	partes := strings.Split(portStr, ",")
+	var listaFinal []string
 
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
+	for _, parte := range partes {
+		if parte == "" {
 			continue
 		}
-		parts := strings.Split(input, " ")
-		command := parts[0]
 
-		switch command {
-
-		case "set":
-			// Supondo que você já tem a HandleSet definida
-			HandleSet(parts)
-
-		case "show":
-			// Supondo que você já tem a HandleShow definida
-			HandleShow()
-
-		case "dns":
-			if target == "" {
-				fmt.Println("[-] Erro: Defina 'target' antes.")
-			} else {
-				EnumerateDNS(target, wordlist, threads)
+		// Se a parte contiver um hífen, é um range (ex: "1-100")
+		if strings.Contains(parte, "-") {
+			rangeLimits := strings.Split(parte, "-")
+			if len(rangeLimits) != 2 {
+				return nil, fmt.Errorf("formato de range inválido: %s", parte)
 			}
 
+			// Convertendo os limites para números inteiros
+			inicio, err1 := strconv.Atoi(rangeLimits[0])
+			fim, err2 := strconv.Atoi(rangeLimits[1])
+
+			// Validações de segurança
+			if err1 != nil || err2 != nil || inicio > fim || inicio < 1 || fim > 65535 {
+				return nil, fmt.Errorf("valores de porta inválidos no range: %s", parte)
+			}
+
+			// Faz o loop para adicionar todas as portas do range na lista
+			for i := inicio; i <= fim; i++ {
+				// Convertemos de volta para string porque o net.JoinHostPort pede string
+				listaFinal = append(listaFinal, strconv.Itoa(i))
+			}
+		} else {
+			// Se não tem hífen, é apenas uma porta única (ex: "80")
+			portaNum, err := strconv.Atoi(parte)
+			if err != nil || portaNum < 1 || portaNum > 65535 {
+				return nil, fmt.Errorf("porta inválida: %s", parte)
+			}
+			listaFinal = append(listaFinal, parte)
+		}
+	}
+
+	return listaFinal, nil
+}
+
+func main() {
+
+	// Preparamos o Go para ler argumentos de terminal (o famoso argv)
+	// Sintaxe: flag.String("nome_da_flag", "valor_padrao", "Descrição")
+	argTarget := flag.String("t", "", "Define o alvo (Ex: example.com)")
+	argWordlist := flag.String("w", "wordlist.txt", "Caminho da wordlist")
+	argModulo := flag.String("m", "", "Módulo para rodar direto (dns, dir, port)")
+	argPorts := flag.String("p", "21,22,80,443,8080", "Portas para escanear (Ex: 80,443)")
+	argThreads := flag.Int("c", 10, "Número de threads")
+
+	flag.Usage = func() {
+		fmt.Println("=== Go Master Framework (GMF) ===")
+		fmt.Println("\n[*] MODO AUTOMAÇÃO (CLI):")
+		fmt.Println("  Uso: ./gmf -m <modulo> -t <alvo> [opções]")
+		fmt.Println("\n  Flags:")
+		flag.PrintDefaults()
+
+		fmt.Println("\n[*] MODO INTERATIVO:")
+		fmt.Println("  Rode o programa sem a flag '-m' para abrir o console.")
+		fmt.Println("\n  Comandos Disponíveis (Console):")
+		fmt.Println("   set <campo> <valor> : Configura variáveis (target, wordlist, ports, threads)")
+		fmt.Println("   show                : Exibe as configurações atuais")
+		fmt.Println("   dns                 : Inicia a enumeração de subdomínios (DNS)")
+		fmt.Println("   dir                 : Inicia a enumeração de diretórios (Web)")
+		fmt.Println("   port                : Inicia o scan de portas TCP")
+		fmt.Println("   help                : Exibe este menu de ajuda")
+		fmt.Println("   exit                : Fecha o framework")
+		fmt.Println("=================================")
+	}
+
+	// Lê o que foi digitado no terminal
+	flag.Parse()
+
+	// VERIFICAÇÃO PARA AUTOMAÇÃO (BASH)
+	// Se o usuário passou a flag "-m" (módulo), roda sem abrir o menu!
+	if *argModulo != "" {
+		if *argTarget == "" {
+			fmt.Println("[-] Para automação, você precisa definir um alvo com -t")
+			os.Exit(1)
+		}
+
+		// Roda o módulo escolhido silenciosamente e imprime o resultado
+		switch *argModulo {
 		case "dir":
-			if target == "" {
-				fmt.Println("[-] Erro: Defina 'target' antes.")
-			} else {
-				EnumerateDIR(target, wordlist, threads)
+			relatorio, _ := EnumerateDIR(*argTarget, *argWordlist, *argThreads)
+			if len(relatorio.Findings) > 0 {
+				for _, f := range relatorio.Findings {
+					fmt.Printf("%s/%s\n", *argTarget, f.Path)
+				}
+			}
+
+		case "dns":
+			relatorio, _ := EnumerateDNS(*argTarget, *argWordlist, *argThreads)
+			if len(relatorio.Findings) > 0 {
+				for _, f := range relatorio.Findings {
+					fmt.Printf("%s\n", f.Subdomain)
+				}
 			}
 
 		case "port":
-			if target == "" {
-				fmt.Println("[-] Erro: Defina 'target' antes.")
-			} else {
-				PortScan(target, ports, threads)
+			relatorio, _ := PortScan(*argTarget, *argPorts, *argThreads)
+			if len(relatorio.OpenPorts) > 0 {
+				for _, p := range relatorio.OpenPorts {
+					fmt.Printf("%s: Aberta\n", p.Port)
+				}
 			}
 
-		case "help":
-			fmt.Println("\nComandos Disponíveis:")
-			fmt.Println("  set <campo> <valor> : Configura variáveis (target, wordlist, ports, threads)")
-			fmt.Println("  show                : Exibe as configurações atuais")
-			fmt.Println("  dns                 : Inicia a enumeração de subdomínios (DNS)")
-			fmt.Println("  dir                 : Inicia a enumeração de diretórios (Web)")
-			fmt.Println("  port                : Inicia o scan de portas TCP")
-			fmt.Println("  help                : Exibe este menu de ajuda")
-			fmt.Println("  exit                : Fecha o framework")
-
-		case "exit":
-			fmt.Println("[*] Saindo do GMF. Até a próxima!")
-			return
+		case "h", "help":
+			flag.Usage()
+			os.Exit(0)
 
 		default:
-			fmt.Printf("[-] Comando desconhecido: %s\n", command)
+			fmt.Printf("[-] Módulo desconhecido: %s\n", *argModulo)
+			os.Exit(0)
 		}
+
+		// Encerra o programa após a execução (não abre o menu interativo)
+		return
 	}
+
+	Menu_main()
 }
