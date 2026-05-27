@@ -12,7 +12,7 @@ var (
 	target    string = "127.0.0.1"
 	wordlist  string = "wordlist.txt"
 	ports     string = "1-1024,1433,1521,3306,3389,8000,8080"
-	extensoes string = ".php,.php.bak,.php.old,.phtml,.jsp,.do,.action,.aspx,.asp,.config,.ascx,.py,.wsgi,.rb,.bak,.old,.swp,.tmp,.zip,.tar.gz,.rar,.7z,.tar,.json,.xml,.log,.yaml,.yml"
+	extensoes string = ""
 	threads   int    = 10
 )
 
