@@ -9,19 +9,18 @@ import (
 )
 
 var (
-	target   string = "example.com"
-	wordlist string = "wordlist.txt"
-	//wl_dns   string = "/usr/share/seclists/Discovery/DNS/top-1m.txt"
-	//wl_dir   string = "/usr/share/seclists/Discovery/Web-Content/raft-large.txt"
-	ports   string = "1-1024,3306,3389,8080"
-	threads int    = 10
+	target    string = "127.0.0.1"
+	wordlist  string = "wordlist.txt"
+	ports     string = "1-1024,1433,1521,3306,3389,8000,8080"
+	extensoes string = ".php,.php.bak,.php.old,.phtml,.jsp,.do,.action,.aspx,.asp,.config,.ascx,.py,.wsgi,.rb,.bak,.old,.swp,.tmp,.zip,.tar.gz,.rar,.7z,.tar,.json,.xml,.log,.yaml,.yml"
+	threads   int    = 10
 )
 
 func ParsePorts(portStr string) ([]string, error) {
-	// Removemos os espaços para evitar problemas
+	// Remover os espaços para evitar problemas
 	portStr = strings.ReplaceAll(portStr, " ", "")
 
-	// Separamos tudo que estiver dividido por vírgula
+	// Separar tudo que estiver dividido por vírgula
 	partes := strings.Split(portStr, ",")
 	var listaFinal []string
 
@@ -64,6 +63,36 @@ func ParsePorts(portStr string) ([]string, error) {
 	return listaFinal, nil
 }
 
+func ParseExtensions(extStr string) ([]string, error) {
+	// Remover os espaços para evitar problemas
+	extStr = strings.ReplaceAll(extStr, " ", "")
+
+	// Separar tudo que estiver dividido por vírgula
+	partes := strings.Split(extStr, ",")
+	var listaFinal []string
+
+	for _, parte := range partes {
+		parte = strings.TrimSpace(parte)
+		if parte == "" {
+			continue
+		}
+
+		// Garante que não há caracteres inválidos para extensões comuns
+		// Evita que o usuário passe caminhos ou sujeira na flag
+		if strings.ContainsAny(parte, `/\:*?"<>|`) {
+			return nil, fmt.Errorf("extensão contém caracteres inválidos: %s", parte)
+		}
+
+		// Padronização: remove o ponto inicial se o usuário digitou (ex: ".php" vira "php")
+		// Já que a sua função EnumerateDIR adiciona o ponto automaticamente.
+		parte = strings.TrimPrefix(parte, ".")
+
+		listaFinal = append(listaFinal, parte)
+	}
+
+	return listaFinal, nil
+}
+
 func main() {
 
 	// Preparamos o Go para ler argumentos de terminal (o famoso argv)
@@ -71,7 +100,8 @@ func main() {
 	argTarget := flag.String("t", "", "Define o alvo (Ex: example.com)")
 	argWordlist := flag.String("w", "wordlist.txt", "Caminho da wordlist")
 	argModulo := flag.String("m", "", "Módulo para rodar direto (dns, dir, port)")
-	argPorts := flag.String("p", "21,22,80,443,8080", "Portas para escanear (Ex: 80,443)")
+	argPorts := flag.String("p", "1-1024,1433,1521,3306,3389,8000,8080", "Portas para escanear (Ex: 80,443)")
+	argExtensoes := flag.String("e", ".php,.php.bak,.php.old,.phtml,.jsp,.do,.action,.aspx,.asp,.config,.ascx,.py,.wsgi,.rb,.bak,.old,.swp,.tmp,.zip,.tar.gz,.rar,.7z,.tar,.json,.xml,.log,.yaml,.yml", "Extensões para varredura de diretórios (Ex: .php,.aspx)")
 	argThreads := flag.Int("c", 10, "Número de threads")
 
 	flag.Usage = func() {
@@ -108,7 +138,12 @@ func main() {
 		// Roda o módulo escolhido silenciosamente e imprime o resultado
 		switch *argModulo {
 		case "dir":
-			relatorio, _ := EnumerateDIR(*argTarget, *argWordlist, *argThreads)
+			exts, err := ParseExtensions(*argExtensoes)
+			if err != nil {
+				fmt.Printf("[-] Erro nas extensões: %v\n", err)
+				os.Exit(1)
+			}
+			relatorio, _ := EnumerateDIR(*argTarget, *argWordlist, *argThreads, exts)
 			if len(relatorio.Findings) > 0 {
 				for _, f := range relatorio.Findings {
 					fmt.Printf("%s/%s\n", *argTarget, f.Path)

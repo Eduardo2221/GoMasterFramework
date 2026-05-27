@@ -23,8 +23,7 @@ type DNSScanReport struct {
 }
 
 func EnumerateDNS(alvo string, wordlist string, threads int) (DNSScanReport, error) {
-	var report DNSScanReport
-	report.Target = alvo
+	report := DNSScanReport{Target: alvo}
 
 	// Tenta abrir o arquivo de texto
 	file, err := os.Open(wordlist)
@@ -33,12 +32,24 @@ func EnumerateDNS(alvo string, wordlist string, threads int) (DNSScanReport, err
 	}
 	defer file.Close()
 
+	// --- INTEGRAÇÃO DA CALIBRAÇÃO (Silenciosa) ---
+	// Chama a função compartilhada do seu outro arquivo
+	temWildcard, ipsFalsos := ObterLinhaBaseDNS(alvo)
+
+	// Criamos um mapa para busca rápida (O(1)) dos IPs falsos
+	wildcardIPs := make(map[string]bool)
+	if temWildcard {
+		for _, ip := range ipsFalsos {
+			wildcardIPs[ip] = true
+		}
+	}
+	// ---------------------------------------------
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var count int
-	var encontrados []DNSResult // Lista para guardar os subdomínios válidos
+	var encontrados []DNSResult
 
-	// Canal por onde envia os prefixos para os Workers testarem
 	tarefas := make(chan string, threads*2)
 
 	// INICIA O WORKER POOL
@@ -47,26 +58,41 @@ func EnumerateDNS(alvo string, wordlist string, threads int) (DNSScanReport, err
 		go func() {
 			defer wg.Done()
 
-			// O Worker fica em loop recebendo tarefas do canal
 			for prefixo := range tarefas {
-				// Monta o subdomínio (ex: admin + . + site.com)
 				subdominio := prefixo + "." + alvo
 
-				// Faz a pergunta para os servidores DNS da internet
+				// Faz a consulta DNS
 				ips, err := net.LookupHost(subdominio)
 
-				// Bloqueia com Mutex para atualizar contadores e salvar o resultado
 				mu.Lock()
 				count++
+				mu.Unlock()
 
-				// Se não deu erro e retornou IPs, salva na estrutura
 				if err == nil && len(ips) > 0 {
+					// --- FILTRAGEM DO WILDCARD ---
+					if temWildcard {
+						ehFalsoPositivo := false
+						for _, ip := range ips {
+							// Se qualquer um dos IPs retornados bater com os IPs da linha base falsa, ignora
+							if wildcardIPs[ip] {
+								ehFalsoPositivo = true
+								break
+							}
+						}
+						if ehFalsoPositivo {
+							continue // Ignora em silêncio e vai para a próxima tarefa
+						}
+					}
+					// ------------------------------
+
+					// Se passou pelo filtro, salva o resultado legítimo
+					mu.Lock()
 					encontrados = append(encontrados, DNSResult{
 						Subdomain: subdominio,
 						IPs:       ips,
 					})
+					mu.Unlock()
 				}
-				mu.Unlock()
 			}
 		}()
 	}
@@ -75,8 +101,9 @@ func EnumerateDNS(alvo string, wordlist string, threads int) (DNSScanReport, err
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		palavra := strings.TrimSpace(scanner.Text())
-		if palavra != "" {
-			tarefas <- palavra // Envia a palavra para o canal
+		// Ignora vazios ou comentários comuns em wordlists de DNS
+		if palavra != "" && !strings.HasPrefix(palavra, "#") {
+			tarefas <- palavra
 		}
 	}
 

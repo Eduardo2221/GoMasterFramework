@@ -12,7 +12,7 @@ func HandleSet(parts []string) error {
 	}
 
 	campo := strings.ToLower(parts[1])
-	valor := parts[2]
+	valor := strings.Join(parts[2:], "")
 
 	switch campo {
 	case "target":
@@ -21,6 +21,8 @@ func HandleSet(parts []string) error {
 		wordlist = valor
 	case "ports":
 		ports = valor
+	case "extensoes":
+		extensoes = valor
 	case "threads":
 		var t int
 		// Tenta converter o valor digitado para número inteiro
@@ -43,6 +45,7 @@ func HandleShow() string {
 	sb.WriteString(fmt.Sprintf(" Target:   %s\n", target))
 	sb.WriteString(fmt.Sprintf(" Wordlist: %s\n", wordlist))
 	sb.WriteString(fmt.Sprintf(" Portas:   %s\n", ports))
+	sb.WriteString(fmt.Sprintf(" Extensões: %s\n", extensoes))
 	sb.WriteString(fmt.Sprintf(" Threads:  %d\n", threads))
 
 	return sb.String()

@@ -76,10 +76,10 @@ func Menu_main() {
 			if target == "" {
 				fmt.Println("[-] Erro: Defina 'target' antes.")
 			} else {
-				fmt.Printf("[*] Iniciando varredura em %s...\n", target)
+				exts := []string{".php", ".txt", ".zip"}
 
 				// Recebemos os dados retornados pela nova função
-				relatorio, err := EnumerateDIR(target, wordlist, threads)
+				relatorio, err := EnumerateDIR(target, wordlist, threads, exts)
 
 				// Tratamos o erro (ex: se a wordlist não existir)
 				if err != nil {
@@ -130,7 +130,7 @@ func Menu_main() {
 
 		case "help":
 			fmt.Println("\nComandos Disponíveis:")
-			fmt.Println("  set <campo> <valor> : Configura variáveis (target, wordlist, ports, threads)")
+			fmt.Println("  set <campo> <valor> : Configura variáveis (target, wordlist, ports, extensoes, threads)")
 			fmt.Println("  show                : Exibe as configurações atuais")
 			fmt.Println("  dns                 : Inicia a enumeração de subdomínios (DNS)")
 			fmt.Println("  dir                 : Inicia a enumeração de diretórios (Web)")

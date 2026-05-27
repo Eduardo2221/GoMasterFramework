@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -21,14 +24,18 @@ type ScanReport struct {
 	Findings      []DirResult
 }
 
-func EnumerateDIR(alvo string, wordlist string, threads int) (ScanReport, error) {
+func EnumerateDIR(alvo string, wordlist string, threads int, extensions []string) (ScanReport, error) {
 	var report ScanReport
+
+	if !strings.HasPrefix(alvo, "http://") && !strings.HasPrefix(alvo, "https://") {
+		alvo = "http://" + alvo
+	}
+
 	report.Target = alvo
 	alvo = strings.TrimSuffix(alvo, "/")
 
 	file, err := os.Open(wordlist)
 	if err != nil {
-		// Ao invés de printar, retorna o erro para quem chamou a função lidar com ele
 		return report, fmt.Errorf("erro ao abrir a wordlist: %v", err)
 	}
 	defer file.Close()
@@ -36,69 +43,117 @@ func EnumerateDIR(alvo string, wordlist string, threads int) (ScanReport, error)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var count int
-	var encontrados []DirResult // Lista onde vai guardar os achados
+	var encontrados []DirResult
 
 	tarefas := make(chan string, threads*2)
+
+	transporteInseguro := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transporteInseguro,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// Obtém silenciosamente o comportamento do Soft 404 / Catch-All
+	statusFalso, tamanhoFalso := ObterLinhaBaseHTTP(client, alvo)
+
+	fmt.Printf("\n[+] Iniciando varredura em: %s\n", alvo)
+	fmt.Printf("[+] Threads: %d | Extensões: %v\n", threads, extensions)
+	fmt.Println(strings.Repeat("-", 50))
 
 	// INICIA O WORKER POOL
 	for i := 1; i <= threads; i++ {
 		wg.Add(1)
-		go func(id int) {
+		go func() {
 			defer wg.Done()
-
-			client := &http.Client{
-				Timeout: 2 * time.Second,
-				CheckRedirect: func(req *http.Request, via []*http.Request) error {
-					return http.ErrUseLastResponse
-				},
-			}
 
 			for path := range tarefas {
 				fullURL := fmt.Sprintf("%s/%s", alvo, path)
 
 				req, err := http.NewRequest("GET", fullURL, nil)
-				if err == nil {
-					req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+				if err != nil {
+					continue
 				}
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GMF")
 
 				resp, err := client.Do(req)
 
-				// Bloqueia para atualizar contadores e salvar dados de forma segura
 				mu.Lock()
 				count++
+				mu.Unlock()
 
-				// Se encontrou algo, não printa, apenas salva na estrutura!
-				if err == nil && resp.StatusCode != 404 {
+				if err != nil && !errors.Is(err, http.ErrUseLastResponse) {
+					if resp != nil {
+						resp.Body.Close()
+					}
+					continue
+				}
+
+				if resp != nil {
+					// Filtro 1: Ignora os erros explícitos de cara
+					if resp.StatusCode == 404 || resp.StatusCode == 400 {
+						resp.Body.Close()
+						continue
+					}
+
+					// Lê o tamanho do corpo da resposta atual
+					body, err := io.ReadAll(resp.Body)
+					resp.Body.Close()
+					if err != nil {
+						continue
+					}
+					tamanhoAtual := int64(len(body))
+
+					// Filtro 2: Validação contra o comportamento do Soft 404 obtido na calibração
+					if resp.StatusCode == statusFalso && tamanhoAtual == tamanhoFalso {
+						continue
+					}
+
+					// Se passou por tudo, guarda e exibe na tela
+					mu.Lock()
 					encontrados = append(encontrados, DirResult{
 						Path:   path,
 						Status: resp.StatusCode,
 					})
-				}
-				mu.Unlock()
-
-				if err == nil {
-					resp.Body.Close()
+					fmt.Printf("==> ENCONTRADO: /%s (Status: %d)\n", path, resp.StatusCode)
+					mu.Unlock()
 				}
 			}
-		}(i)
+		}()
 	}
 
-	// ALIMENTA OS WORKERS COM AS TAREFAS
+	// ALIMENTA OS WORKERS
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		palavra := scanner.Text()
-		if palavra != "" {
-			tarefas <- palavra
+		palavra := strings.TrimSpace(scanner.Text())
+
+		if palavra == "" || strings.HasPrefix(palavra, "#") {
+			continue
+		}
+
+		tarefas <- palavra
+
+		for _, ext := range extensions {
+			if !strings.HasPrefix(ext, ".") {
+				ext = "." + ext
+			}
+			tarefas <- palavra + ext
 		}
 	}
 
 	close(tarefas)
 	wg.Wait()
 
-	// Preenche o relatório final
+	fmt.Println(strings.Repeat("-", 50))
+	fmt.Printf("[+] Varredura concluída. Total de requisições: %d\n", count)
+
 	report.TotalRequests = count
 	report.Findings = encontrados
 
-	// Retorna o relatório completo e erro nulo (pois deu tudo certo)
 	return report, nil
 }
